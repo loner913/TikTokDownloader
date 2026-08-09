@@ -398,16 +398,16 @@ class TikTok:
                     )
                 )
                 count.failed += 1
-                continue
-            if not await self.deal_account_detail(
+            elif not await self.deal_account_detail(
                 index,
                 **vars(data) | {"sec_user_id": sec_user_id},
                 tiktok=tiktok,
             ):
                 count.failed += 1
-                continue
-            # break  # 调试代码
-            count.success += 1
+            else:
+                # break  # 调试代码
+                count.success += 1
+            # 无论账号成功或失败，都按已经尝试处理的账号位置执行节流。
             if index != len(accounts):
                 await suspend(index, self.console)
         self.__summarize_results(
@@ -518,16 +518,17 @@ class TikTok:
     ):
         count = SimpleNamespace(time=time(), success=0, failed=0)
         for index, sec in enumerate(links, start=1):
-            if not await self.deal_account_detail(
+            if await self.deal_account_detail(
                 index,
                 sec_user_id=sec,
                 tiktok=tiktok,
                 *args,
                 **kwargs,
             ):
+                count.success += 1
+            else:
                 count.failed += 1
-                continue
-            count.success += 1
+            # 无论账号成功或失败，都按已经尝试处理的账号位置执行节流。
             if index != len(links):
                 await suspend(index, self.console)
         self.__summarize_results(

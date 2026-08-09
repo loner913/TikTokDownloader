@@ -1,5 +1,7 @@
 from asyncio import sleep
+from collections.abc import Mapping
 from math import log
+from os import environ
 from random import lognormvariate
 from typing import TYPE_CHECKING
 
@@ -47,6 +49,35 @@ def condition_filter(data: dict) -> bool:
     return True
 
 
+def _environment_integer(
+    environment: Mapping[str, str],
+    name: str,
+    default: int,
+    minimum: int,
+) -> int:
+    try:
+        value = int(environment.get(name, ""))
+    except (TypeError, ValueError):
+        return default
+    return value if value >= minimum else default
+
+
+def get_suspend_options(
+    environment: Mapping[str, str] | None = None,
+) -> tuple[int, int]:
+    """Return account batch size and rest seconds supplied by DouK-Manager.
+
+    The original 50/150 behaviour remains the fallback for direct launches,
+    invalid environment variables, and older manager versions.
+    """
+
+    source = environ if environment is None else environment
+    return (
+        _environment_integer(source, "DOUK_ACCOUNT_BATCH_SIZE", 50, 1),
+        _environment_integer(source, "DOUK_ACCOUNT_REST_SECONDS", 150, 0),
+    )
+
+
 async def suspend(count: int, console: "ColorfulConsole") -> None:
     """
     如需采集大量数据，请启用该函数，可以在处理指定数量的数据后，暂停一段时间，然后继续运行
@@ -55,10 +86,9 @@ async def suspend(count: int, console: "ColorfulConsole") -> None:
     仅对 批量下载账号作品模式 和 批量下载合集作品模式 生效
     说明: 此处的一个数据代表一个账号或者一个合集，并非代表一个数据包
     """
-    # 启用该函数
-    batches = 50  # 根据实际需求修改
-    if not count % batches:
-        rest_time = 150   # 根据实际需求修改
+    # 启用该函数；DouK-Manager 可通过环境变量覆盖，直接运行仍默认 50/150。
+    batches, rest_time = get_suspend_options()
+    if count > 0 and not count % batches and rest_time > 0:
         console.print(
             _(
                 "程序连续处理了 {batches} 个数据，为了避免请求频率过高导致账号或 IP 被风控，"
