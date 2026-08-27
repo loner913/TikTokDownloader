@@ -1,4 +1,4 @@
-from re import compile
+from re import compile, fullmatch
 from typing import TYPE_CHECKING, Union
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -19,6 +19,11 @@ class Extractor:
     account_share = compile(
         r"\S*?https://www\.iesdouyin\.com/share/user/(\S*?)\?\S*?"  # 账号主页分享链接
     )
+
+    # 账号主页长链接本地解析的校验参数，校验不通过一律回退原有 GET 解析路径
+    ACCOUNT_LINK_HOST = "www.douyin.com"
+    ACCOUNT_LINK_PATH = "user"
+    ACCOUNT_ID_MIN_LENGTH = 16
 
     detail_id = compile(r"\b(\d{19})\b")  # 作品 ID
     detail_link = compile(
@@ -68,6 +73,8 @@ class Extractor:
         type_="detail",
         proxy: str = None,
     ) -> Union[list[str], tuple[bool, list[str]], str]:
+        if type_ == "user" and (shortcut := self.__account_shortcut(text)):
+            return shortcut
         text = await self.requester.run(
             text,
             proxy,
@@ -111,6 +118,55 @@ class Extractor:
         link = self.extract_info(self.account_link, urls, 1)
         share = self.extract_info(self.account_share, urls, 1)
         return link + share
+
+    @classmethod
+    def _valid_account_url(cls, url: str) -> str:
+        """校验账号主页长链接并返回 sec_user_id，不合法时返回空字符串。
+
+        仅接受可以完全本地解析的标准长链接；任何不确定的情况都返回空字符串，
+        由调用方回退到原有的 GET 解析路径。
+        """
+        try:
+            parsed = urlparse(url)
+        except ValueError:
+            return ""
+        if parsed.scheme != "https" or parsed.netloc != cls.ACCOUNT_LINK_HOST:
+            return ""
+        segments = [i for i in parsed.path.split("/") if i]
+        if len(segments) != 2 or segments[0] != cls.ACCOUNT_LINK_PATH:
+            return ""
+        sec_user_id = segments[1]
+        if len(sec_user_id) < cls.ACCOUNT_ID_MIN_LENGTH:
+            return ""
+        # 与 account_link 保持同一字符集，避免放宽已验证的匹配范围
+        if not fullmatch(r"[A-Za-z0-9_-]+", sec_user_id):
+            return ""
+        return sec_user_id
+
+    def __account_shortcut(
+        self,
+        text: str,
+    ) -> list[str]:
+        """标准账号主页长链接的本地解析短路，命中时可省去一次跳转请求。
+
+        逐个 URL 独立判断：只有文本中的每个 URL 都通过本地校验时才返回结果；
+        存在短链接、未知链接、畸形链接或解析异常时返回空列表，交由原路径处理。
+        """
+        try:
+            urls = Requester.URL.findall(text)
+            if not urls:
+                return []
+            result = []
+            for url in urls:
+                if not (sec_user_id := self._valid_account_url(url)):
+                    return []
+                result.append(sec_user_id)
+            # 与 user() 的返回结果对齐：确认正则同样命中，避免语义分叉
+            if result != self.user(" ".join(urls)):
+                return []
+            return result
+        except Exception:
+            return []
 
     def mix(
         self,
