@@ -1,4 +1,4 @@
-from re import compile, fullmatch
+from re import compile
 from typing import TYPE_CHECKING, Union
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -22,8 +22,8 @@ class Extractor:
 
     # 账号主页长链接本地解析的校验参数，校验不通过一律回退原有 GET 解析路径
     ACCOUNT_LINK_HOST = "www.douyin.com"
-    ACCOUNT_LINK_PATH = "user"
-    ACCOUNT_ID_MIN_LENGTH = 16
+    ACCOUNT_LINK_PATH = compile(r"/user/([A-Za-z0-9_-]+)/?")
+    ACCOUNT_ID_LENGTHS = frozenset((55, 76))
 
     detail_id = compile(r"\b(\d{19})\b")  # 作品 ID
     detail_link = compile(
@@ -132,14 +132,12 @@ class Extractor:
             return ""
         if parsed.scheme != "https" or parsed.netloc != cls.ACCOUNT_LINK_HOST:
             return ""
-        segments = [i for i in parsed.path.split("/") if i]
-        if len(segments) != 2 or segments[0] != cls.ACCOUNT_LINK_PATH:
+        if parsed.params:
             return ""
-        sec_user_id = segments[1]
-        if len(sec_user_id) < cls.ACCOUNT_ID_MIN_LENGTH:
+        if not (matched := cls.ACCOUNT_LINK_PATH.fullmatch(parsed.path)):
             return ""
-        # 与 account_link 保持同一字符集，避免放宽已验证的匹配范围
-        if not fullmatch(r"[A-Za-z0-9_-]+", sec_user_id):
+        sec_user_id = matched.group(1)
+        if len(sec_user_id) not in cls.ACCOUNT_ID_LENGTHS:
             return ""
         return sec_user_id
 

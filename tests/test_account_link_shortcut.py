@@ -9,15 +9,21 @@
 
 from __future__ import annotations
 
+import ast
 import unittest
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
+
+from httpx import AsyncClient, MockTransport, Request, Response
 
 from src.link.extractor import Extractor, ExtractorTikTok
+from src.link.requester import Requester
 
 LONG_LINK = (
     "https://www.douyin.com/user/"
     "MS4wLjABAAAAxQ1p8mBvR7nK3sYtL9wZcDfGhJkMnPqRsTuVwXyZaBcDeFgHiJkLmNoPqRsTuVwX"
 )
+LONG_LINK_55 = "https://www.douyin.com/user/" + "MS4wLjABAAAA" + "A" * 43
 SHORT_LINK = "https://v.douyin.com/4pXudktVCRU/"
 MONITOR_TEXT = (
     "0.25 C@u.fo 09/22 :1pm CuS:/ 红色～  "
@@ -43,12 +49,33 @@ class FakeRequester:
         return ""
 
 
+class SilentLogger:
+    def info(self, *_args, **_kwargs) -> None:
+        pass
+
+    def warning(self, *_args, **_kwargs) -> None:
+        pass
+
+    def error(self, *_args, **_kwargs) -> None:
+        pass
+
+
 def build_extractor(resolved: str | None = None) -> tuple[Extractor, FakeRequester]:
     """构造只替换 requester 的 Extractor，避免依赖 Parameter 与网络。"""
     extractor = Extractor.__new__(Extractor)
     requester = FakeRequester(resolved)
     extractor.requester = requester
     return extractor, requester
+
+
+def build_real_requester(client: AsyncClient, headers: dict[str, str]) -> Requester:
+    requester = Requester.__new__(Requester)
+    requester.client = client
+    requester.headers = headers
+    requester.log = SilentLogger()
+    requester.max_retry = 0
+    requester.timeout = 10
+    return requester
 
 
 class AccountShortcutHitTests(unittest.IsolatedAsyncioTestCase):
@@ -58,6 +85,15 @@ class AccountShortcutHitTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, [LONG_LINK.rsplit("/", 1)[-1]])
         self.assertEqual(requester.calls, [], "命中长链接时不应发出链接解析 GET")
+
+    async def test_both_observed_account_id_lengths_skip_get(self) -> None:
+        for url in (LONG_LINK, LONG_LINK_55):
+            with self.subTest(length=len(url.rsplit("/", 1)[-1])):
+                extractor, requester = build_extractor()
+                result = await extractor.run(url, "user")
+
+                self.assertEqual(result, [url.rsplit("/", 1)[-1]])
+                self.assertEqual(requester.calls, [])
 
     async def test_result_matches_original_get_path(self) -> None:
         """短路结果必须与原 GET 路径的结果逐项一致。"""
@@ -79,6 +115,22 @@ class AccountShortcutHitTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, [LONG_LINK.rsplit("/", 1)[-1]])
         self.assertEqual(requester.calls, [])
 
+    async def test_fragment_and_single_trailing_slash_are_parsed_locally(
+        self,
+    ) -> None:
+        account_id = LONG_LINK.rsplit("/", 1)[-1]
+        for url in (
+            f"{LONG_LINK}#作品",
+            f"{LONG_LINK}/",
+            f"{LONG_LINK}/?from_tab_name=main#作品",
+        ):
+            with self.subTest(url=url):
+                extractor, requester = build_extractor()
+                result = await extractor.run(url, "user")
+
+                self.assertEqual(result, [account_id])
+                self.assertEqual(requester.calls, [])
+
     async def test_multiple_long_links_all_skip_get(self) -> None:
         second = LONG_LINK[:-4] + "WxYz"
         extractor, requester = build_extractor()
@@ -88,6 +140,15 @@ class AccountShortcutHitTests(unittest.IsolatedAsyncioTestCase):
             result,
             [LONG_LINK.rsplit("/", 1)[-1], second.rsplit("/", 1)[-1]],
         )
+        self.assertEqual(requester.calls, [])
+
+    async def test_duplicate_long_links_preserve_duplicates(self) -> None:
+        account_id = LONG_LINK.rsplit("/", 1)[-1]
+        extractor, requester = build_extractor()
+
+        result = await extractor.run(f"说明 {LONG_LINK} {LONG_LINK} 完成", "user")
+
+        self.assertEqual(result, [account_id, account_id])
         self.assertEqual(requester.calls, [])
 
 
@@ -121,6 +182,10 @@ class AccountShortcutFallbackTests(unittest.IsolatedAsyncioTestCase):
             "https://www.douyin.com/user/短",
             "https://www.douyin.com/user/abc",  # 长度不足
             "https://www.douyin.com/user/a/b",  # 路径段过多
+            f"https://www.douyin.com/user//{'M' * 40}",  # 空路径段
+            f"https://www.douyin.com//user/{'M' * 40}",  # 双前导斜杠
+            f"https://www.douyin.com/user/{'M' * 40}///",  # 多个尾斜杠
+            f"https://www.douyin.com/user/{'M' * 40};param",  # path params
             "http://www.douyin.com/user/" + "M" * 40,  # 非 https
             "https://www.iesdouyin.com/share/user/MS4wLjABAAAA?sec_uid=x",
             "not a url at all",
@@ -177,6 +242,14 @@ class OtherEntryPointsUnchangedTests(unittest.IsolatedAsyncioTestCase):
         await extractor.run(mix, "mix")
 
         self.assertEqual(requester.calls, [mix])
+
+    async def test_live_entry_still_requests(self) -> None:
+        live = "https://live.douyin.com/123456789"
+        extractor, requester = build_extractor(resolved=live)
+        result = await extractor.run(live, "live")
+
+        self.assertEqual(requester.calls, [live])
+        self.assertEqual(result, ["123456789"])
 
     async def test_raw_entry_still_requests(self) -> None:
         extractor, requester = build_extractor(resolved=LONG_LINK)
@@ -269,23 +342,176 @@ class KnownDefectNotWorsenedTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(Extractor._valid_account_url("garbage"), "")
 
 
+class RealRequesterFallbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_long_link_skips_requester_transport_and_wait(self) -> None:
+        for headers in ({}, {"Cookie": "configured=present"}):
+            with self.subTest(explicit_cookie=bool(headers)):
+                transport_calls: list[Request] = []
+
+                async def handler(request: Request) -> Response:
+                    transport_calls.append(request)
+                    return Response(500)
+
+                async with AsyncClient(
+                    transport=MockTransport(handler), follow_redirects=True
+                ) as client:
+                    requester = build_real_requester(client, headers)
+                    extractor = Extractor.__new__(Extractor)
+                    extractor.requester = requester
+
+                    with patch.object(
+                        requester, "run", wraps=requester.run
+                    ) as run_spy, patch(
+                        "src.link.requester.wait", new_callable=AsyncMock
+                    ) as wait_mock:
+                        result = await extractor.run(LONG_LINK, "user")
+
+                    jar_nonempty = bool(list(client.cookies.jar))
+                    configured_cookie = requester.headers.get("Cookie")
+
+                self.assertEqual(result, [LONG_LINK.rsplit("/", 1)[-1]])
+                run_spy.assert_not_awaited()
+                wait_mock.assert_not_awaited()
+                self.assertEqual(transport_calls, [])
+                self.assertFalse(jar_nonempty)
+                self.assertEqual(configured_cookie, headers.get("Cookie"))
+
+    async def test_short_link_keeps_one_resolution_call_and_one_wait(self) -> None:
+        synthetic_short = "https://v.douyin.com/controlled/"
+        for headers in ({}, {"Cookie": "configured=present"}):
+            with self.subTest(explicit_cookie=bool(headers)):
+                transport_calls: list[Request] = []
+                cookie_header_present: list[bool] = []
+
+                async def handler(request: Request) -> Response:
+                    transport_calls.append(request)
+                    cookie_header_present.append(bool(request.headers.get("Cookie")))
+                    if len(transport_calls) == 1:
+                        return Response(
+                            302,
+                            headers={
+                                "Location": LONG_LINK,
+                                "Set-Cookie": (
+                                    "page_cookie=present; Domain=.douyin.com; Path=/"
+                                ),
+                            },
+                        )
+                    return Response(200)
+
+                async with AsyncClient(
+                    transport=MockTransport(handler), follow_redirects=True
+                ) as client:
+                    requester = build_real_requester(client, headers)
+                    extractor = Extractor.__new__(Extractor)
+                    extractor.requester = requester
+
+                    with patch.object(
+                        requester, "run", wraps=requester.run
+                    ) as run_spy, patch.object(
+                        requester, "request_url", wraps=requester.request_url
+                    ) as request_spy, patch(
+                        "src.link.requester.wait", new_callable=AsyncMock
+                    ) as wait_mock:
+                        result = await extractor.run(synthetic_short, "user")
+
+                    jar_nonempty = bool(list(client.cookies.jar))
+
+                run_spy.assert_awaited_once_with(synthetic_short, None)
+                request_spy.assert_awaited_once_with(synthetic_short, proxy=None)
+                wait_mock.assert_awaited_once_with()
+                self.assertEqual(len(transport_calls), 2, "一次解析允许正常重定向")
+                self.assertEqual(result, [LONG_LINK.rsplit("/", 1)[-1]])
+                self.assertTrue(jar_nonempty)
+                self.assertEqual(cookie_header_present[0], bool(headers))
+                self.assertTrue(cookie_header_present[1])
+
+    async def test_mixed_urls_preserve_get_count_order_and_results(self) -> None:
+        second_long_link = LONG_LINK[:-4] + "WxYz"
+        text = f"{LONG_LINK} {SHORT_LINK}"
+        extractor = Extractor.__new__(Extractor)
+        requester = Requester.__new__(Requester)
+        requester.request_url = AsyncMock(side_effect=[LONG_LINK, second_long_link])
+        extractor.requester = requester
+
+        with patch.object(requester, "run", wraps=requester.run) as run_spy, patch(
+            "src.link.requester.wait", new_callable=AsyncMock
+        ) as wait_mock:
+            result = await extractor.run(text, "user")
+
+        run_spy.assert_awaited_once_with(text, None)
+        self.assertEqual(requester.request_url.await_count, 2)
+        self.assertEqual(
+            [item.args[0] for item in requester.request_url.await_args_list],
+            [LONG_LINK, SHORT_LINK],
+        )
+        self.assertEqual(wait_mock.await_count, 2)
+        self.assertEqual(
+            result,
+            [LONG_LINK.rsplit("/", 1)[-1], second_long_link.rsplit("/", 1)[-1]],
+        )
+
+
 class ValidationRuleTests(unittest.TestCase):
     def test_valid_account_url_accepts_real_shapes(self) -> None:
         self.assertTrue(Extractor._valid_account_url(LONG_LINK))
         self.assertTrue(Extractor._valid_account_url(f"{LONG_LINK}?from=x"))
+        self.assertTrue(Extractor._valid_account_url(f"{LONG_LINK}#作品"))
+        self.assertTrue(Extractor._valid_account_url(f"{LONG_LINK}/"))
+        self.assertTrue(Extractor._valid_account_url(LONG_LINK_55))
 
     def test_valid_account_url_rejects_everything_else(self) -> None:
+        account_id = "M" * 40
         for url in (
             SHORT_LINK,
             "https://www.douyin.com/user/",
             "https://www.douyin.com/user/tooshort",
             "https://www.douyin.com/video/7412345678901234567",
-            "https://m.douyin.com/user/" + "M" * 40,
-            "https://www.douyin.com.evil.com/user/" + "M" * 40,
-            "https://www.douyin.com/user/" + "M" * 40 + "/extra",
+            f"http://www.douyin.com/user/{account_id}",
+            f"https://m.douyin.com/user/{account_id}",
+            f"https://www.douyin.com.evil.com/user/{account_id}",
+            f"https://www.douyin.com:443/user/{account_id}",
+            f"https://www.douyin.com@evil.com/user/{account_id}",
+            f"https://www.douyin.com/user/{account_id}/extra",
+            f"https://www.douyin.com/user//{account_id}",
+            f"https://www.douyin.com//user/{account_id}",
+            f"https://www.douyin.com/user/{account_id}///",
+            f"https://www.douyin.com/user/{account_id};param",
+            f"https://www.douyin.com/user/{account_id}.invalid",
+            f"https://www.douyin.com/user/{account_id}%2Fextra",
+            "https://www.douyin.com/user/" + "M" * 16,
+            "https://www.douyin.com/user/" + "M" * 54,
+            "https://www.douyin.com/user/" + "M" * 56,
+            "https://www.douyin.com/user/" + "M" * 75,
+            "https://www.douyin.com/user/" + "M" * 77,
         ):
             with self.subTest(url=url):
                 self.assertEqual(Extractor._valid_account_url(url), "")
+
+
+class BatchEntryContractTests(unittest.TestCase):
+    def test_5_1_1_batch_entry_uses_user_link_extractor(self) -> None:
+        source = (
+            Path(__file__).parents[1] / "src" / "application" / "main_terminal.py"
+        ).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        method = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.AsyncFunctionDef)
+            and node.name == "check_sec_user_id"
+        )
+        user_calls = [
+            node
+            for node in ast.walk(method)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "run"
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value == "user"
+        ]
+
+        self.assertEqual(len(user_calls), 2)
 
 
 if __name__ == "__main__":
