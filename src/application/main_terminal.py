@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from os import environ
 from pathlib import Path
 from platform import system
 from time import time
@@ -9,6 +10,7 @@ from pydantic import ValidationError
 
 # from ..custom import failure_handling
 from ..custom import suspend
+from ..custom.function import get_suspend_options
 from ..downloader import Downloader
 from ..extract import Extractor
 from ..interface import (
@@ -99,6 +101,7 @@ def check_cookie_state(tiktok=False):
 
 class TikTok:
     ENCODE = "UTF-8-SIG" if system() == "Windows" else "UTF-8"
+    INFO_BATCH_SIZE = 5
 
     def __init__(
         self,
@@ -377,6 +380,29 @@ class TikTok:
         params_name: str,
         tiktok: bool,
     ) -> None:
+        if not tiktok and self._manager_info_batch_enabled():
+            await self.__account_detail_batch_douyin(accounts, params_name)
+            return
+        await self.__account_detail_batch_single(accounts, params_name, tiktok)
+
+    @staticmethod
+    def _manager_info_batch_enabled(environment=None) -> bool:
+        source = environ if environment is None else environment
+        return all(
+            name in source
+            for name in (
+                "DOUK_MANAGER_BACKUP",
+                "DOUK_ACCOUNT_BATCH_SIZE",
+                "DOUK_ACCOUNT_REST_SECONDS",
+            )
+        )
+
+    async def __account_detail_batch_single(
+        self,
+        accounts: list[SimpleNamespace],
+        params_name: str,
+        tiktok: bool,
+    ) -> None:
         count = SimpleNamespace(time=time(), success=0, failed=0)
         self.logger.info(
             _("共有 {count} 个账号的作品等待下载").format(count=len(accounts))
@@ -414,6 +440,131 @@ class TikTok:
             count,
             _("账号"),
         )
+
+    async def __account_detail_batch_douyin(
+        self,
+        accounts: list[SimpleNamespace],
+        params_name: str,
+    ) -> None:
+        """Process manager accounts with batched Info requests and safe fallback."""
+        count = SimpleNamespace(time=time(), success=0, failed=0)
+        self.logger.info(
+            _("共有 {count} 个账号的作品等待下载").format(count=len(accounts))
+        )
+        suspend_batch, _rest_time = get_suspend_options()
+        batch_size = self.INFO_BATCH_SIZE
+        position = 0
+        while position < len(accounts):
+            index = position + 1
+            boundary_left = suspend_batch - ((index - 1) % suspend_batch)
+            batch = accounts[position : position + min(batch_size, boundary_left)]
+            resolved = []
+            for offset, data in enumerate(batch):
+                account_index = index + offset
+                sec_user_id = await self.check_sec_user_id(data.url)
+                resolved.append((account_index, data, sec_user_id))
+                if not sec_user_id:
+                    self.logger.warning(
+                        _(
+                            "配置文件 {name} 参数的 url {url} 提取 sec_user_id 失败，错误配置：{data}"
+                        ).format(
+                            name=params_name,
+                            url=data.url,
+                            data=vars(data),
+                        )
+                    )
+
+            requested_ids = list(
+                dict.fromkeys(sec for _, _, sec in resolved if sec)
+            )
+            info_map = await self._prefetch_account_info(requested_ids)
+            for account_index, data, sec_user_id in resolved:
+                if not sec_user_id:
+                    count.failed += 1
+                else:
+                    info = info_map.get(sec_user_id)
+                    if await self.deal_account_detail(
+                        account_index,
+                        **vars(data) | {"sec_user_id": sec_user_id},
+                        tiktok=False,
+                        prefetched_info=info,
+                    ):
+                        count.success += 1
+                    else:
+                        count.failed += 1
+                if account_index != len(accounts):
+                    await suspend(account_index, self.console)
+            position += len(batch)
+        self.__summarize_results(count, _("账号"))
+
+    async def _prefetch_account_info(
+        self,
+        requested_ids: list[str],
+    ) -> dict[str, dict]:
+        """Return only uniquely and structurally reliable batch Info records."""
+        if not requested_ids:
+            return {}
+        try:
+            response = await self._get_info_data(sec_user_id=requested_ids, first=False)
+        except Exception:
+            self.logger.warning(_("批量获取账号信息失败，将回退单账号路径"))
+            return {}
+        if not isinstance(response, list):
+            self.logger.warning(_("批量账号信息响应结构无效，将回退单账号路径"))
+            return {}
+
+        requested = set(requested_ids)
+        records: dict[str, dict] = {}
+        seen_ids = set()
+        invalid_ids = set()
+        duplicate_ids = set()
+        extra_count = 0
+        malformed_count = 0
+        for item in response:
+            if not isinstance(item, dict):
+                malformed_count += 1
+                continue
+            sec_user_id = item.get("sec_uid")
+            if not isinstance(sec_user_id, str) or not sec_user_id:
+                malformed_count += 1
+                continue
+            if sec_user_id not in requested:
+                extra_count += 1
+                continue
+            if sec_user_id in seen_ids:
+                duplicate_ids.add(sec_user_id)
+                invalid_ids.add(sec_user_id)
+                records.pop(sec_user_id, None)
+                continue
+            seen_ids.add(sec_user_id)
+            try:
+                extracted = self.extractor.get_user_info(item)
+            except (AttributeError, TypeError):
+                extracted = {}
+            if (
+                extracted.get("sec_uid") != sec_user_id
+                or not extracted.get("nickname")
+                or not extracted.get("uid")
+            ):
+                malformed_count += 1
+                invalid_ids.add(sec_user_id)
+                continue
+            records[sec_user_id] = item
+        for sec_user_id in invalid_ids:
+            records.pop(sec_user_id, None)
+        missing_count = len(requested - set(records))
+        if missing_count or extra_count or malformed_count or duplicate_ids:
+            self.logger.warning(
+                _(
+                    "批量账号信息存在不确定返回，缺失={missing}，额外={extra}，畸形={malformed}，重复={duplicate}"
+                ).format(
+                    missing=missing_count,
+                    extra=extra_count,
+                    malformed=malformed_count,
+                    duplicate=len(duplicate_ids),
+                )
+            )
+        return records
 
     async def check_sec_user_id(
         self,
@@ -551,6 +702,7 @@ class TikTok:
         proxy: str = None,
         tiktok=False,
         *args,
+        prefetched_info: dict = None,
         **kwargs,
     ):
         self.logger.info(
@@ -560,6 +712,8 @@ class TikTok:
         )
         if api:
             info = None
+        elif prefetched_info is not None:
+            info = prefetched_info
         elif not (
             info := await self.get_user_info_data(
                 tiktok,
@@ -670,6 +824,7 @@ class TikTok:
         proxy: str = None,
         unique_id: Union[str] = "",
         sec_user_id: Union[str] = "",
+        first: bool = True,
     ):
         return (
             await self._get_info_data_tiktok(
@@ -683,6 +838,7 @@ class TikTok:
                 cookie,
                 proxy,
                 sec_user_id,
+                first=first,
             )
         )
 
@@ -691,13 +847,14 @@ class TikTok:
         cookie: str = None,
         proxy: str = None,
         sec_user_id: Union[str, list[str]] = ...,
+        first: bool = True,
     ):
         return await Info(
             self.parameter,
             cookie,
             proxy,
             sec_user_id,
-        ).run()
+        ).run(first=first)
 
     async def _get_info_data_tiktok(
         self,
