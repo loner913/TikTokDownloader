@@ -21,7 +21,6 @@ class InfoBatchMappingTests(unittest.IsolatedAsyncioTestCase):
     def make_owner(self):
         owner = TikTok.__new__(TikTok)
         owner.logger = SimpleNamespace(warning=Mock(), info=Mock())
-        owner.extractor = SimpleNamespace(get_user_info=lambda item: item)
         return owner
 
     async def test_response_order_maps_by_returned_sec_uid(self):
@@ -85,7 +84,6 @@ class ManagerBatchEntryTests(unittest.IsolatedAsyncioTestCase):
         owner = TikTok.__new__(TikTok)
         owner.accounts = []
         owner.logger = SimpleNamespace(info=Mock(), warning=Mock())
-        owner.extractor = SimpleNamespace(get_user_info=lambda item: item)
         owner.console = object()
         owner.INFO_BATCH_SIZE = 5
         owner._TikTok__summarize_results = Mock()

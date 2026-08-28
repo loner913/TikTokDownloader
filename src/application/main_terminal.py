@@ -537,14 +537,10 @@ class TikTok:
                 records.pop(sec_user_id, None)
                 continue
             seen_ids.add(sec_user_id)
-            try:
-                extracted = self.extractor.get_user_info(item)
-            except (AttributeError, TypeError):
-                extracted = {}
             if (
-                extracted.get("sec_uid") != sec_user_id
-                or not extracted.get("nickname")
-                or not extracted.get("uid")
+                item.get("sec_uid") != sec_user_id
+                or not item.get("nickname")
+                or not item.get("uid")
             ):
                 malformed_count += 1
                 invalid_ids.add(sec_user_id)
