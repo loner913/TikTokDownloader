@@ -101,7 +101,7 @@ def check_cookie_state(tiktok=False):
 
 class TikTok:
     ENCODE = "UTF-8-SIG" if system() == "Windows" else "UTF-8"
-    INFO_BATCH_SIZE = 5
+    INFO_BATCH_SIZE = 20
 
     def __init__(
         self,

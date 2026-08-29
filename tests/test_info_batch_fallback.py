@@ -80,6 +80,9 @@ class InfoBatchMappingTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ManagerBatchEntryTests(unittest.IsolatedAsyncioTestCase):
+    def test_default_info_batch_size_matches_gate_d_capacity(self) -> None:
+        self.assertEqual(TikTok.INFO_BATCH_SIZE, 20)
+
     def make_owner(self, count: int):
         owner = TikTok.__new__(TikTok)
         owner.accounts = []
