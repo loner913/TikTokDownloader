@@ -465,12 +465,9 @@ class TikTok:
                 resolved.append((account_index, data, sec_user_id))
                 if not sec_user_id:
                     self.logger.warning(
-                        _(
-                            "配置文件 {name} 参数的 url {url} 提取 sec_user_id 失败，错误配置：{data}"
-                        ).format(
+                        _("配置文件 {name} 第 {index} 个账号链接提取失败").format(
                             name=params_name,
-                            url=data.url,
-                            data=vars(data),
+                            index=account_index,
                         )
                     )
 

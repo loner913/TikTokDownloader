@@ -147,6 +147,10 @@ class ManagerBatchEntryTests(unittest.IsolatedAsyncioTestCase):
             [call.args[0] for call in owner.deal_account_detail.await_args_list], [1, 3]
         )
         self.assertEqual(wait.await_count, 2)
+        warning = owner.logger.warning.call_args.args[0]
+        self.assertNotIn("url-id-1", warning)
+        self.assertNotIn("m-1", warning)
+        self.assertIn("第 2 个账号", warning)
 
     async def test_5_10_20_offline_sizes_preserve_order_and_request_counts(self):
         for batch_size in (5, 10, 20):
