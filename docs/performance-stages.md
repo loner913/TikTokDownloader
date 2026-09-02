@@ -9,23 +9,23 @@
 | 阶段 | 分支 | 固定提交 | 关系与状态 |
 | --- | --- | --- | --- |
 | 文档基线 | `master` | `3d8696a1b1d896e6b6f6c26cd48f7c43a7f78d77` | 不含两阶段定制提速代码 |
-| 第一阶段 | `perf/user-link-regex-shortcircuit` | `0b88ed875558064be026952fb98cd2b3174a4047` | 从本仓库 `master` 历史开发并验收冻结 |
-| 第二阶段 | `perf/account-info-batch-fallback` | `34ae30fb6c4c2f6468ee777e649e3d20277280a8` | 线性继承第一阶段，已验收冻结 |
+| 第一阶段 | `perf/stage-01-user-link-shortcut` | `0b88ed875558064be026952fb98cd2b3174a4047` | 从本仓库 `master` 历史开发并验收冻结 |
+| 第二阶段 | `perf/stage-02-info-batch` | `34ae30fb6c4c2f6468ee777e649e3d20277280a8` | 线性继承第一阶段，已验收冻结 |
 
-第二阶段包含第一阶段的全部功能。后续性能开发应从第二阶段固定提交另开分支，不得移动、
-改写或强推上述两个冻结分支。
+第二阶段包含第一阶段的全部功能。下载引擎提速研发在第二阶段批量 Info 完成后正式结束；
+当前不保留第三、第四阶段功能、分支或候选产物。上述两个冻结分支不得移动、改写或强推。
 
 准确入口：
 
-- [第一阶段冻结分支](https://github.com/loner913/TikTokDownloader/tree/perf/user-link-regex-shortcircuit)
+- [第一阶段冻结分支](https://github.com/loner913/TikTokDownloader/tree/perf/stage-01-user-link-shortcut)
 - [第一阶段固定提交](https://github.com/loner913/TikTokDownloader/commit/0b88ed875558064be026952fb98cd2b3174a4047)
-- [第二阶段冻结分支](https://github.com/loner913/TikTokDownloader/tree/perf/account-info-batch-fallback)
+- [第二阶段冻结分支](https://github.com/loner913/TikTokDownloader/tree/perf/stage-02-info-batch)
 - [第二阶段固定提交](https://github.com/loner913/TikTokDownloader/commit/34ae30fb6c4c2f6468ee777e649e3d20277280a8)
 - [手动“构建可执行文件”工作流](https://github.com/loner913/TikTokDownloader/actions/workflows/Manually_build_executable_programs.yml)
 
 `master` 页面及上游 `JoeanAmier/TikTokDownloader` 的 Release/下载入口不能作为已安装定制
 版本的身份依据。正确构建来源是上述手动工作流明确选择
-`perf/account-info-batch-fallback`，并确认签出的源码提交严格为第二阶段固定 SHA。
+`perf/stage-02-info-batch`，并确认签出的源码提交严格为第二阶段固定 SHA。
 
 ## 第一阶段：账号长链接本地解析优先
 
@@ -110,7 +110,7 @@ Info 预取不得跨过下一次暂停边界。因此一个完整 50 账号配�
 ### GitHub Actions 最终产物身份
 
 最终构建来自仓库现有“构建可执行文件”手动工作流 Run #5，源码分支为
-`perf/account-info-batch-fallback`，源码提交为第二阶段固定 SHA。已下载产物完成只读 ZIP
+`perf/stage-02-info-batch`，源码提交为第二阶段固定 SHA。已下载产物完成只读 ZIP
 哈希、CRC、路径安全、`main.exe`/`_internal` 结构检查，并在 D 盘隔离环境完成身份对齐。
 
 | 对象 | 文件名/相对路径 | 大小（字节） | SHA-256 |
