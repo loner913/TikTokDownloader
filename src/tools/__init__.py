@@ -4,6 +4,7 @@ from .choose import choose
 from .cleaner import Cleaner
 from .console import ColorfulConsole
 from .error import CacheError, DownloaderError
+from .external_params import load_external_douyin_params
 from .file_folder import file_switch, remove_empty_directories
 from .format import (
     cookie_dict_to_str,
@@ -33,6 +34,7 @@ __all__ = [
     "ColorfulConsole",
     "CacheError",
     "DownloaderError",
+    "load_external_douyin_params",
     "file_switch",
     "remove_empty_directories",
     "cookie_dict_to_str",

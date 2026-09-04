@@ -6,3 +6,11 @@ __pycache__/
 /.run/
 /Volume/
 !/.github/
+
+# 外挂签名：运行时生成的桥文件不入库（每次启动按 UA 重建）
+/static/js/douyin_websign.cjs
+
+# 本地构建产物
+/dist/
+/build/
+/main.spec

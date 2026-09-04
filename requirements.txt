@@ -12,6 +12,8 @@ gmssl==3.2.2
     # via douk-downloader (pyproject.toml)
 httpx[socks]==0.28.1
     # via douk-downloader (pyproject.toml)
+javascript==1!1.2.6
+    # via douk-downloader (pyproject.toml) - encipher.py WebSign bridge
 lxml==6.1.1
     # via douk-downloader (pyproject.toml)
 openpyxl==3.1.5

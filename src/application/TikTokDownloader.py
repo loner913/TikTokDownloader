@@ -9,6 +9,7 @@ from src.custom import (
     COOKIE_UPDATE_INTERVAL,
     DISCLAIMER_TEXT,
     DOCUMENTATION_URL,
+    ERROR,
     LICENCE,
     MASTER,
     PROJECT_NAME,
@@ -31,6 +32,7 @@ from src.tools import (
     DownloaderError,
     RenameCompatible,
     choose,
+    load_external_douyin_params,
     remove_empty_directories,
     safe_pop,
 )
@@ -226,6 +228,23 @@ class TikTokDownloader:
         self.console.print(_("项目地址: {}").format(REPOSITORY), style=MASTER)
         self.console.print(_("项目文档: {}").format(DOCUMENTATION_URL), style=MASTER)
         self.console.print(_("开源许可: {}\n").format(LICENCE), style=MASTER)
+        self.__report_external_params()
+
+    def __report_external_params(self) -> None:
+        """启动时就报告外挂签名状态，避免懒加载让用户看不到结果。"""
+        external = load_external_douyin_params()
+        if external is None:
+            self.console.print(
+                "外挂签名代码 encipher.py: 未加载（使用内置算法）",
+                style=ERROR,
+            )
+            return
+        active = getattr(external, "_websign", None) is not None
+        self.console.print(
+            "外挂签名代码 encipher.py: 已加载  WebSign: "
+            + ("已启用" if active else "不可用（未检测到 Node.js >= 18）"),
+            style=MASTER if active else ERROR,
+        )
 
     def check_config(self):
         self.recorder = DownloadRecorder(

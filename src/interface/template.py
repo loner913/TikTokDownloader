@@ -11,7 +11,13 @@ from rich.progress import (
 )
 
 from ..custom import PROGRESS, USERAGENT, wait
-from ..tools import DownloaderError, FakeProgress, Retry, capture_error_request
+from ..tools import (
+    DownloaderError,
+    FakeProgress,
+    Retry,
+    capture_error_request,
+    load_external_douyin_params,
+)
 from ..translation import _
 
 if TYPE_CHECKING:
@@ -260,6 +266,7 @@ class API:
         params = self.deal_url_params(
             params,
             encryption,
+            url=url,
         )
         match (method, bool(self.proxy)):
             case ("GET", False):
@@ -432,6 +439,7 @@ class API:
         self,
         params: dict,
         method="GET",
+        url: str = "",
         **kwargs,
     ) -> str:
         if params:
@@ -440,6 +448,16 @@ class API:
                 safe="=",
                 quote_via=quote,
             )
+            # 优先使用根目录 encipher.py 提供的外部签名实现；
+            # 文件不存在时 external 为 None，行为与原始代码完全一致。
+            if external := load_external_douyin_params():
+                return external.sign_url(
+                    url,
+                    params,
+                    None,
+                    method,
+                    user_agent=self.headers.get("User-Agent", USERAGENT),
+                )
             params += f"&a_bogus={self.ab.get_value(params, method)}"
             return params
         return ""
