@@ -184,14 +184,23 @@ TikTok 路径不受影响（`APITikTok.deal_url_params` 带 `**kwargs`，新增�
 
 1. **目标机需 Node.js ≥ 18。** 缺失时签名会静默退回失效的 `a_bogus`，403 会重现。
 2. 构建工作流**必须**保留 `--collect-all javascript`。JSPyBridge 以包数据形式携带 `javascript/js/*.js`，PyInstaller 默认不收，缺失会导致冻结版启动即崩。
-3. 安装后需手动将 `encipher.py` 放到 `main.exe` 同级目录。
-4. 运行前确认启动横幅：
+3. **`encipher.py` 需与 `main.exe` 同级。** 首次部署、或把新产物解压到一个新目录时要手动放一次；原地覆盖式更新不会动到它，无需重放。该文件刻意不打进构建产物（便于删文件回退），所以每个新解压出来的目录里都没有它。
+4. **路径全部相对解析，目录可任意改名或移动。** 加载器按 `main.exe` 所在目录找 `encipher.py`（`src/tools/external_params.py:35`），`encipher.py` 再从该目录出发、依次尝试自身与 `_internal` 来定位 `static/js/`（`encipher.py:52-57`）。只有这层相对关系必须成立：`encipher.py` 与 `main.exe` 同级，`static/js/` 在 `main.exe` 目录或其 `_internal` 下。
+5. 换包后核对 `encipher.py` 身份，确认与验收时是同一份（Windows 用 `Get-FileHash`，没有 `sha256sum`）：
+
+```powershell
+Get-FileHash -Algorithm SHA256 encipher.py | Format-List
+```
+
+   期望值见 §8。仓库内的 `encipher.py` 与验收所用文件字节一致，丢失时从仓库取回即可。
+
+6. 运行前确认启动横幅：
 
 ```
 外挂签名代码 encipher.py: 已加载  WebSign: 已启用
 ```
 
-显示"未加载"或"不可用"时**不要**执行批量任务。
+显示"未加载"或"不可用"时**不要**执行批量任务。横幅为"未加载"的常见原因是新目录里没放 `encipher.py`（见第 3 条），"不可用"则多为缺 Node.js（第 1 条）。
 
 ## 7. 边界说明
 
@@ -199,7 +208,7 @@ TikTok 路径不受影响（`APITikTok.deal_url_params` 带 `**kwargs`，新增�
 - `wait()`（均值 6 秒随机间隔）与 `suspend()`（默认 50 个账号休息 150 秒）在本次修复中**完整保留**（改动范围见 §4.2，二者未被触及）。注意 `suspend()` 走 `console.print`，只打控制台不写日志，因此**日志里查不到它的触发记录**——按账号数推算，不要据此认为节流失效。
 - 排障统计请使用 `docs/log-sanitize/sanitize_log.py`（白名单设计，只输出聚合计数，日志正文不外发；用法见同目录 `README.md`）。**引擎日志位于 `<引擎目录>\_internal\Volume\Log\`**，由 `src/custom/internal.py` 的 `PROJECT_ROOT` 决定，不在引擎根目录；`Volume/settings.json` 里的 `root` 是下载目录，与日志无关。
 - 未同步上游 master：其签名状态更差（写死占位符），并夹带破坏性改动。
-- `webmssdk.es5.js` 属字节跳动专有代码，无开源许可，与本仓库 GPL-3.0 存在冲突。上游仅在 develop 分支携带，master 与 release 均不含。使用者需自行评估合规风险。
+- `webmssdk.es5.js` 属字节跳动专有代码，无开源许可，与本仓库 GPL-3.0 存在冲突。上游仅在 develop 分支携带，master 与 release 均不含——这是有意规避。**本分支（`50e85d5`）把它连同 `encipher.py` 一并纳入了版本控制**，好处是部署文件可追溯、丢失可取回，代价是该冲突随提交历史一同存在。若本仓库需要公开分发，应先处理此项。
 
 ## 8. 关键标识
 
